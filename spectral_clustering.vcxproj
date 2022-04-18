@@ -454,6 +454,7 @@
     <None Include="image.ppm" />
     <None Include="largeimage.ppm" />
     <None Include="Makefile" />
+    <None Include="README.md" />
     <None Include="snail.ascii.ppm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

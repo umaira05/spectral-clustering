@@ -10,6 +10,7 @@ struct Pixel {
 	int g = 0;
 	int b = 0;
 
+	Pixel() : r(0), g(0), b(0) {}
 	Pixel(int r_in, int g_in, int b_in) : r(r_in), g(g_in), b(b_in) {}
 };
 
@@ -17,78 +18,68 @@ double similarity(const Pixel p1, const Pixel p2);
 vector<vector<Pixel>> read_image(ifstream& ifs, const int width, const int height);
 void compress_image(vector<vector<Pixel>>& image, int& width, int& height, int new_width, int new_height);
 Eigen::MatrixXd calculate_laplacian(const vector<vector<Pixel>>& image, const int width, const int height, bool norm);
-Eigen::VectorXd k_means(Eigen::MatrixXd eigenvector_mat, const int clusters);
+Eigen::VectorXi k_means(Eigen::MatrixXd eigenvector_mat, const int clusters);
 double sq_dist(const Eigen::VectorXd& p1, const Eigen::VectorXd& p2, const int dim);
 
-int main() {
-	ifstream img("buck.ppm");
+int main(int argc, char ** argv) {
+	string input_file = argv[1];
+	int k = atoi(argv[2]);
+	bool debug = (argc == 4 && (string) argv[3] == "--debug");
+
+	ifstream img(input_file);
 	string p3;
 	int width, height, range;
 	img >> p3 >> width >> height >> range;
 	if (p3 != "P3" || range != 255) {
-		std::cout << "Error with image" << std::endl;
+		cout << "Error with image" << endl;
 		return 1;
 	}
 
 	vector<vector<Pixel>> image = read_image(img, width, height);
 	img.close();
-
 	cout << "Pixels extracted" << endl;
 
-	if (height * width > 25 * 25) {
-		compress_image(image, width, height, 25, 25);
-		cout << "Image compressed" << endl;
+	if (height * width > 25 * 25) { // large images must be compressed
+		compress_image(image, width, height, 25 * (width / sqrt(width * height)), 25 * (height / sqrt(width * height)));
+		cout << "Image compressed";
+		if (debug) {
+			ofstream compressed("compressed.ppm");
+			compressed << "P3\n" << width << " " << height << "\n255";
+			for (int i = 0; i < width * height; i++) {
+				if (i % width == 0) compressed << endl;
+				Pixel* p = &image[i / width][i % width];
+				compressed << p->r << " " << p->g << " " << p->b << " ";
+			}
+			compressed.close();
+			cout << " as shown in compressed.ppm.";
+		}
+		cout << endl;
 	}
 
-	Eigen::MatrixXd laplacian = calculate_laplacian(image, width, height, false);
 	Eigen::MatrixXd norm_laplacian = calculate_laplacian(image, width, height, true);
+	cout << "Normalized Laplacian calculated" << endl;
 
-	cout << "Laplacian calculated" << endl;
+	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(norm_laplacian);
+	cout << "Normalized eigenvectors calculated" << endl;
+	if (debug) cout << "The eigenvalues are:" << endl << es.eigenvalues() << endl
+				<< "The eigenvectors are:" << endl << es.eigenvectors() << endl;
+	
+	Eigen::VectorXi cluster_id = k_means(es.eigenvectors(), k);
+	Pixel * palette = new Pixel[k];
+	for (int i = 0; i < k; i++)
+		palette[i] = Pixel(rand() % 255, rand() % 255, rand() % 255); // generate color palette
 
-	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(laplacian);
-	cout << "Eigenvectors calculated" << endl;
-
-	//cout << "The eigenvalues are:" << endl << es.eigenvalues() << endl;
-	//cout << "The eigenvectors are:" << endl << es.eigenvectors() << endl;
-	//cout << "The eigenvector we care about is: " << endl << es.eigenvectors().col(1) << endl;
 	ofstream output("output.ppm");
 	output << "P3\n" << width << " " << height << "\n255";
 	for (int i = 0; i < width * height; i++) {
 		if (i % width == 0) output << endl;
-		if (es.eigenvectors().col(1)(i) >= 0)
-			output << "255 255 255 ";
-		else
-			output << "0 0 0 ";
+		output << palette[cluster_id(i)].r << " "
+			<< palette[cluster_id(i)].g << " "
+			<< palette[cluster_id(i)].b << " ";
 	}
-	cout << "Split into 2 sections as shown in output.ppm." << endl;
+	cout << "Split into " << k << " clusters as shown in output.ppm." << endl;
 	output.close();
-
-	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_norm(norm_laplacian);
-	cout << "Normalized eigenvectors calculated" << endl;
-	//cout << "The eigenvectors are:" << endl << es_norm.eigenvectors() << endl;
-	Eigen::VectorXd cluster_id = k_means(es_norm.eigenvectors(), 3);
-
-	ofstream normoutput("normoutput.ppm");
-	normoutput << "P3\n" << width << " " << height << "\n255";
-	for (int i = 0; i < width * height; i++) {
-		if (i % width == 0) { normoutput << endl; cout << endl; }
-		if (cluster_id(i) == 0) {
-			normoutput << "255 0 0 ";
-			cout << "R ";
-		}
-		else if (cluster_id(i) == 1) {
-			normoutput << "0 255 0 ";
-				cout << "G ";
-		}
-		else if (cluster_id(i) == 2) {
-			normoutput << "0 0 255 ";
-			cout << "B ";
-		}
-		else
-			normoutput << "0 0 0 ";
-	}
-	cout << "Split into 3 sections as shown in normoutput.ppm." << endl;
-	normoutput.close();
+	delete[] palette;
 
 	return 0;
 }
@@ -98,8 +89,7 @@ double similarity(const Pixel p1, const Pixel p2) {
 	double dr = ((double)p2.r) - p1.r;
 	double dg = ((double)p2.g) - p1.g;
 	double db = ((double)p2.b) - p1.b;
-	return 1 - sqrt((2 + rmean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rmean) / 256) * db * db)/764.83;
-	//return 1 - sqrt(dr * dr + dg * dg + db * db) / (255 * sqrt(3));
+	return exp(-1*sqrt((2 + rmean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rmean) / 256) * db * db));
 }
 
 vector<vector<Pixel>> read_image(ifstream& ifs, const int width, const int height) {
@@ -128,14 +118,6 @@ void compress_image(vector<vector<Pixel>>& image, int& width, int& height, int n
 	image = compressed_image;
 	height = new_height;
 	width = new_width;
-	ofstream compressed("compressed.ppm");
-	compressed << "P3\n" << width << " " << height << "\n255";
-	for (int i = 0; i < width * height; i++) {
-		if (i % width == 0) compressed << endl;
-		Pixel* p = &compressed_image[i / width][i % width];
-		compressed << p->r << " " << p->g << " " << p->b << " ";
-	}
-	compressed.close();
 }
 
 Eigen::MatrixXd calculate_laplacian(const vector<vector<Pixel>>& image, const int width, const int height, bool norm) {
@@ -147,10 +129,26 @@ Eigen::MatrixXd calculate_laplacian(const vector<vector<Pixel>>& image, const in
 			if (row > 0) { // pixel above
 				laplacian(row * width + col, (row - 1) * width + col) -= similarity(image[row][col], image[row - 1][col]);
 				laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row - 1][col]);
+				if (col > 0) { // pixel up and to the left
+					laplacian(row * width + col, (row - 1) * width + col - 1) -= similarity(image[row][col], image[row - 1][col - 1]);
+					laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row - 1][col - 1]);
+				}
+				if (col < width - 1) { // pixel up and to the right
+					laplacian(row * width + col, (row - 1) * width + col + 1) -= similarity(image[row][col], image[row - 1][col + 1]);
+					laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row - 1][col + 1]);
+				}
 			}
 			if (row < height - 1) { // pixel below
 				laplacian(row * width + col, (row + 1) * width + col) -= similarity(image[row][col], image[row + 1][col]);
 				laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row + 1][col]);
+				if (col > 0) { // pixel down and to the left
+					laplacian(row * width + col, (row + 1) * width + col - 1) -= similarity(image[row][col], image[row + 1][col - 1]);
+					laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row + 1][col - 1]);
+				}
+				if (col < width - 1) { // pixel down and to the right
+					laplacian(row * width + col, (row + 1) * width + col + 1) -= similarity(image[row][col], image[row + 1][col + 1]);
+					laplacian(row * width + col, row * width + col) += similarity(image[row][col], image[row + 1][col + 1]);
+				}
 			}
 			if (col > 0) { // pixel to the left
 				laplacian(row * width + col, row * width + col - 1) -= similarity(image[row][col], image[row][col - 1]);
@@ -168,8 +166,8 @@ Eigen::MatrixXd calculate_laplacian(const vector<vector<Pixel>>& image, const in
 	return laplacian;
 }
 
-Eigen::VectorXd k_means(Eigen::MatrixXd eigenvector_mat, const int clusters) {
-	for (int i = 0; i < eigenvector_mat.rows(); i++) {
+Eigen::VectorXi k_means(Eigen::MatrixXd eigenvector_mat, const int clusters) {
+	for (int i = 0; i < eigenvector_mat.rows(); i++) { 
 		double length = sqrt(sq_dist(Eigen::VectorXd::Zero(eigenvector_mat.cols()), eigenvector_mat.row(i), clusters));
 		eigenvector_mat.row(i) = eigenvector_mat.row(i) * (1 / length);
 	}
@@ -183,10 +181,11 @@ Eigen::VectorXd k_means(Eigen::MatrixXd eigenvector_mat, const int clusters) {
 			node_index = rand() % eigenvector_mat.rows();
 		centroid_nodes.push_back(node_index);
 		centroids.row(i) = eigenvector_mat.row(node_index);
-		cout << node_index << ": " << centroids.row(i) << endl;
 	}
-	Eigen::VectorXd node_assignments(eigenvector_mat.rows()); 
-	for (int repeat = 0; repeat < 20; repeat++) {
+	Eigen::VectorXi node_assignments(eigenvector_mat.rows());
+	Eigen::VectorXi prev_node_assignments(eigenvector_mat.rows());
+	do {
+		prev_node_assignments = node_assignments;
 		for (int i = 0; i < eigenvector_mat.rows(); i++) { // assign points to closest centroid
 			int closest_centroid = 0;
 			double sq_dist_to_cent = sq_dist(eigenvector_mat.row(i), centroids.row(0), clusters);
@@ -196,37 +195,21 @@ Eigen::VectorXd k_means(Eigen::MatrixXd eigenvector_mat, const int clusters) {
 					sq_dist_to_cent = sq_dist(eigenvector_mat.row(i), centroids.row(j), clusters);
 				}
 			}
-			cout << closest_centroid;
 			node_assignments(i) = closest_centroid;
 		}
-		for (int i = 0; i < clusters; i++) {
+		for (int i = 0; i < clusters; i++) { // move centroids to center of closest pixels
 			Eigen::RowVectorXd new_centroid = Eigen::RowVectorXd::Zero(eigenvector_mat.cols());
 			double num_points_assigned = 0;
 			for (int j = 0; j < eigenvector_mat.rows(); j++) {
-				//if (repeat == 0)
-					//cout << new_centroid << endl;
 				if (i == node_assignments(j)) {
 					num_points_assigned++;
 					new_centroid = new_centroid + eigenvector_mat.row(j);
 				}
 			}
 			new_centroid = new_centroid * (1/num_points_assigned);
-			//cout << new_centroid - centroids.row(i) << endl;
 			centroids.row(i) = new_centroid;
 		}
-		cout << endl;
-	}
-	for (int i = 0; i < eigenvector_mat.rows(); i++) { // assign points to closest centroid
-		int closest_centroid = 0;
-		double sq_dist_to_cent = sq_dist(eigenvector_mat.row(i), centroids.row(0), clusters);
-		for (int j = 0; j < clusters; j++) {
-			if (sq_dist(eigenvector_mat.row(i), centroids.row(j), clusters) < sq_dist_to_cent) {
-				closest_centroid = j;
-				sq_dist_to_cent = sq_dist(eigenvector_mat.row(i), centroids.row(j), clusters);
-			}
-		}
-		node_assignments(i) = closest_centroid;
-	}
+	} while (!prev_node_assignments.isApprox(node_assignments));
 	return node_assignments;
 }
 
