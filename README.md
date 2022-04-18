@@ -36,6 +36,8 @@ If the debug flag is passed in, the program produces output.ppm as well as the c
 
 ![Snail from PPMA](Resources/snail.png?raw=true "Snail") *Image of Snail from PPMA*
 
+![Compressed Snail](Resources/compressedsnail.png?raw=true "Compressed Snail") *Image of Snail Post-Compression*
+
 `./spectral_clustering.exe Resources/snail.ascii.ppm 2`
 
 ![2 Cluster Snail](Resources/2clustersnail.png "2 Cluster Snail")
